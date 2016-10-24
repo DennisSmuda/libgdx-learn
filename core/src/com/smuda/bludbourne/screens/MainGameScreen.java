@@ -4,16 +4,14 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Screen;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
-import com.badlogic.gdx.graphics.g2d.Sprite;
-import com.badlogic.gdx.graphics.g2d.TextureRegion;
-import com.badlogic.gdx.maps.MapLayer;
-import com.badlogic.gdx.maps.MapObject;
-import com.badlogic.gdx.maps.objects.RectangleMapObject;
 import com.badlogic.gdx.maps.tiled.renderers.OrthogonalTiledMapRenderer;
-import com.badlogic.gdx.math.Rectangle;
+import com.badlogic.gdx.utils.Json;
+import com.smuda.bludbourne.Component;
 import com.smuda.bludbourne.Entity;
+import com.smuda.bludbourne.EntityFactory;
+import com.smuda.bludbourne.Map;
 import com.smuda.bludbourne.MapManager;
-import com.smuda.bludbourne.PlayerController;
+
 
 /**
  * Created by dennissmuda on 21/10/16.
@@ -32,180 +30,117 @@ public class MainGameScreen implements Screen {
     static float aspectRatio;
   }
 
-  private PlayerController _controller;
-  private TextureRegion _currentPlayerFrame;
-  private Sprite _currentPlayerSprite;
-
   private OrthogonalTiledMapRenderer _mapRenderer = null;
   private OrthographicCamera _camera = null;
   private static MapManager _mapMgr;
+  private Json _json;
 
-  public MainGameScreen() {
+  public MainGameScreen(){
     _mapMgr = new MapManager();
+    _json = new Json();
   }
 
   private static Entity _player;
 
   @Override
   public void show() {
-    // Camera setup
+    //_camera setup
     setupViewport(10, 10);
 
-    // Get the current size
+    //get the current size
     _camera = new OrthographicCamera();
     _camera.setToOrtho(false, VIEWPORT.viewportWidth, VIEWPORT.viewportHeight);
 
-    _mapRenderer = new OrthogonalTiledMapRenderer(_mapMgr.getCurrentMap(), MapManager.UNIT_SCALE);
+    _mapRenderer = new OrthogonalTiledMapRenderer(_mapMgr.getCurrentTiledMap(), Map.UNIT_SCALE);
     _mapRenderer.setView(_camera);
 
-    Gdx.app.debug(TAG, "UnitScale value is " + _mapRenderer.getUnitScale());
+    _mapMgr.setCamera(_camera);
 
-    _player = new Entity();
-    _player.init(_mapMgr.getPlayerStartUnitScaled().x, _mapMgr.getPlayerStartUnitScaled().y);
+    Gdx.app.debug(TAG, "UnitScale value is: " + _mapRenderer.getUnitScale());
 
-    _currentPlayerSprite = _player.getFrameSprite();
-
-    _controller = new PlayerController(_player);
-    Gdx.input.setInputProcessor(_controller);
-
-    Gdx.app.debug(TAG, "Game Screen Fuck Yea");
+    _player = EntityFactory.getEntity(EntityFactory.EntityType.PLAYER);
+    _mapMgr.setPlayer(_player);
   }
 
   @Override
   public void hide() {
   }
-
   @Override
   public void render(float delta) {
     Gdx.gl.glClearColor(0, 0, 0, 1);
     Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
-    // Preferable to lock and center the _camera to the player's position
-    _camera.position.set(_currentPlayerSprite.getX(), _currentPlayerSprite.getY(), 0f);
-    _camera.update();
+    _mapRenderer.setView(_camera);
 
-    _player.update(delta);
-    _currentPlayerFrame = _player.getFrame();
+    //_mapRenderer.getBatch().enableBlending();
+    //_mapRenderer.getBatch().setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
-    updatePortalLayerActivation(_player.boundingBox);
+    if( _mapMgr.hasMapChanged() ){
+      _mapRenderer.setMap(_mapMgr.getCurrentTiledMap());
+      _player.sendMessage(Component.MESSAGE.INIT_START_POSITION, _json.toJson(_mapMgr.getPlayerStartUnitScaled()));
 
-    if (!isCollisionWithMapLayer(_player.boundingBox)) {
-      _player.setNextPositionToCurrent();
+      _camera.position.set(_mapMgr.getPlayerStartUnitScaled().x, _mapMgr.getPlayerStartUnitScaled().y, 0f);
+      _camera.update();
+
+      _mapMgr.setMapChanged(false);
     }
 
-    _controller.update(delta);
-
-    _mapRenderer.setView(_camera);
     _mapRenderer.render();
 
-    _mapRenderer.getBatch().begin();
-    _mapRenderer.getBatch().draw(_currentPlayerFrame, _currentPlayerSprite.getX(), _currentPlayerSprite.getY(), 1, 1);
-    _mapRenderer.getBatch().end();
+    _mapMgr.updateCurrentMapEntities(_mapMgr, _mapRenderer.getBatch(), delta );
+
+    _player.update(_mapMgr, _mapRenderer.getBatch(), delta);
   }
+
+
 
   @Override
   public void resize(int width, int height) {
-
   }
 
   @Override
   public void pause() {
-
   }
 
   @Override
   public void resume() {
-
   }
 
   @Override
   public void dispose() {
     _player.dispose();
-    _controller.dispose();
-    Gdx.input.setInputProcessor(null);
     _mapRenderer.dispose();
   }
 
-
-  private void setupViewport(int width, int height) {
-    // Make the viewport a percentage of the total display area
+  private void setupViewport(int width, int height){
+    //Make the viewport a percentage of the total display area
     VIEWPORT.virtualWidth = width;
     VIEWPORT.virtualHeight = height;
 
-    // Current viewport dimension
+    //Current viewport dimensions
     VIEWPORT.viewportWidth = VIEWPORT.virtualWidth;
     VIEWPORT.viewportHeight = VIEWPORT.virtualHeight;
 
-    // Pixel dimensions of display
+    //pixel dimensions of display
     VIEWPORT.physicalWidth = Gdx.graphics.getWidth();
     VIEWPORT.physicalHeight = Gdx.graphics.getHeight();
 
-    // Aspect Ratio for current viewport
-    VIEWPORT.aspectRatio = (VIEWPORT.virtualWidth / VIEWPORT.viewportHeight);
+    //aspect ratio for current viewport
+    VIEWPORT.aspectRatio = (VIEWPORT.virtualWidth / VIEWPORT.virtualHeight);
 
-    // Update Viewport if the could be skewing
-    if (VIEWPORT.physicalWidth / VIEWPORT.physicalHeight >= VIEWPORT.aspectRatio) {
-      // Letterbox left and right
-      VIEWPORT.viewportWidth = VIEWPORT.viewportHeight * (VIEWPORT.physicalWidth / VIEWPORT.physicalHeight);
+    //update viewport if there could be skewing
+    if( VIEWPORT.physicalWidth / VIEWPORT.physicalHeight >= VIEWPORT.aspectRatio){
+      //Letterbox left and right
+      VIEWPORT.viewportWidth = VIEWPORT.viewportHeight * (VIEWPORT.physicalWidth/VIEWPORT.physicalHeight);
       VIEWPORT.viewportHeight = VIEWPORT.virtualHeight;
-    } else {
-      // Letterbox above and below
+    }else{
+      //letterbox above and below
       VIEWPORT.viewportWidth = VIEWPORT.virtualWidth;
-      VIEWPORT.viewportHeight = VIEWPORT.viewportWidth * (VIEWPORT.physicalHeight / VIEWPORT.physicalWidth);
+      VIEWPORT.viewportHeight = VIEWPORT.viewportWidth * (VIEWPORT.physicalHeight/VIEWPORT.physicalWidth);
     }
 
-    Gdx.app.debug(TAG, "WorldRenderer: virtual: (" + VIEWPORT.virtualWidth + "," + VIEWPORT.virtualHeight + ")");
-    Gdx.app.debug(TAG, "WorldRenderer: viewport: (" + VIEWPORT.viewportWidth + "," + VIEWPORT.viewportHeight + ")");
-    Gdx.app.debug(TAG, "WorldRenderer: physical: (" + VIEWPORT.physicalWidth + "," + VIEWPORT.physicalHeight + ")");
-  }
-
-  private boolean isCollisionWithMapLayer(Rectangle boundingBox) {
-    MapLayer mapCollisionLayer = _mapMgr.getCollisionLayer();
-
-    if (mapCollisionLayer == null) {
-      return false;
-    }
-
-    Rectangle rectangle = null;
-
-    for (MapObject object : mapCollisionLayer.getObjects()) {
-      if (object instanceof RectangleMapObject) {
-        rectangle = ((RectangleMapObject) object).getRectangle();
-        if (boundingBox.overlaps(rectangle)) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  private boolean updatePortalLayerActivation(Rectangle boundingBox) {
-    MapLayer mapPortalLayer = _mapMgr.getPortalLayer();
-
-    if (mapPortalLayer == null) {
-      return false;
-    }
-
-    Rectangle rectangle = null;
-
-    for (MapObject object: mapPortalLayer.getObjects()) {
-      if (object instanceof RectangleMapObject) {
-        rectangle = ((RectangleMapObject)object).getRectangle();
-
-        if (boundingBox.overlaps(rectangle)) {
-          String mapName =object.getName();
-
-          if (mapName == null) { return false; }
-
-          _mapMgr.setClosestStartPositionFromScaledUnits(_player.getCurrentPosition());
-          _mapMgr.loadMap(mapName);
-          _player.init(_mapMgr.getPlayerStartUnitScaled().x, _mapMgr.getPlayerStartUnitScaled().y);
-          _mapRenderer.setMap(_mapMgr.getCurrentMap());
-          Gdx.app.debug(TAG, "Portal Activated");
-          return true;
-        }
-      }
-    }
-    return false;
+    Gdx.app.debug(TAG, "WorldRenderer: virtual: (" + VIEWPORT.virtualWidth + "," + VIEWPORT.virtualHeight + ")" );
+    Gdx.app.debug(TAG, "WorldRenderer: viewport: (" + VIEWPORT.viewportWidth + "," + VIEWPORT.viewportHeight + ")" );
+    Gdx.app.debug(TAG, "WorldRenderer: physical: (" + VIEWPORT.physicalWidth + "," + VIEWPORT.physicalHeight + ")" );
   }
 }
